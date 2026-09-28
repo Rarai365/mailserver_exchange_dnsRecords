@@ -1,0 +1,324 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}</style><style>:root{color-scheme:light dark;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}}:root[data-theme="dark"]{color-scheme:dark;--md-bg:#0d0d0d;--md-text:rgba(255,255,255,.85);--md-muted:rgba(255,255,255,.6);--md-fill:rgba(255,255,255,.06);--md-fill-strong:rgba(255,255,255,.09);--md-rule:rgba(255,255,255,.14);--md-rule-strong:rgba(255,255,255,.22);--md-link:hsl(210 100% 72%)}:root[data-theme="light"]{color-scheme:light}@media print{:root,:root[data-theme="dark"]{color-scheme:light;--md-bg:#fff;--md-text:rgba(0,0,0,.8);--md-muted:rgba(0,0,0,.6);--md-fill:rgba(0,0,0,.04);--md-fill-strong:rgba(0,0,0,.06);--md-rule:rgba(0,0,0,.1);--md-rule-strong:rgba(0,0,0,.16);--md-link:hsl(210 100% 45%)}}body{background:var(--md-bg);color:var(--md-text);max-width:720px;margin:0 auto;padding:32px;display:flex;flex-direction:column;gap:10px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'SF Pro','Segoe UI',sans-serif;overflow-wrap:break-word}body>:first-child{margin-top:0}h1,h2,h3,h4,h5,h6{margin:6px 0 0;line-height:1.25;font-weight:600;text-wrap:balance}h1{font-size:1.35em}h2{font-size:1.15em;color:var(--md-muted)}h3,h4,h5,h6{font-size:1em}p,ul,ol,blockquote,table,pre,hr{margin:0}strong{font-weight:600}a{color:var(--md-link);text-decoration:none}a:hover{text-decoration:underline}ul,ol{display:flex;flex-direction:column;gap:6px;padding-left:22px}ul{list-style:disc}ol{list-style:decimal}:is(li,td,th)>*+:is(p,ul,ol,blockquote){margin-top:6px}blockquote{display:flex;flex-direction:column;gap:10px;border-left:2px solid var(--md-rule);padding-left:10px;color:var(--md-muted)}:not(pre)>code{background:var(--md-fill);padding:1px 3px;border-radius:4px;font:.92em 'SF Mono',ui-monospace,Menlo,Consolas,monospace}a>code{background:none;color:inherit}pre{background:var(--md-fill);padding:10px 12px;border-radius:6px;overflow-x:auto;font:12px/1.5 'SF Mono',ui-monospace,Menlo,Consolas,monospace;margin-block:4px}pre code{background:none;padding:0;font:inherit}table{width:100%;border-collapse:separate;border-spacing:2px;font:inherit}th,td{padding:6px 8px;border-radius:3px;text-align:left;vertical-align:top}th{background:var(--md-fill-strong);font-weight:600}td{background:var(--md-fill)}:is(th,td) :not(pre)>code{background:transparent}hr{border:0;border-top:1px solid var(--md-rule-strong);margin-block:10px}img{max-width:100%;height:auto;border-radius:4px}</style>
+</head><body>
+<h1>Mail Servers, Exchange &amp; DNS Records — Study &amp; Implementation Guide</h1>
+<h2>1. The Big Picture: How Email Actually Travels</h2>
+<p>Before diving into records, understand the two email protocols that matter:</p>
+<ul>
+<li><strong>SMTP (Simple Mail Transfer Protocol, port 25/587/465)</strong> — used to <em>send</em> mail between servers, and from a client to a server.</li>
+<li><strong>IMAP/POP3 (or MAPI/EWS for Exchange)</strong> — used to <em>retrieve</em> mail from a mailbox.</li>
+</ul>
+<p>When you send an email to <code>someone@company.com</code>, here's the actual sequence:</p>
+<ol>
+<li>Your mail client hands the message to your outgoing mail server (SMTP).</li>
+<li>That server needs to find where <code>company.com</code> receives mail. It queries DNS for an <strong>MX record</strong> on <code>company.com</code>.</li>
+<li>DNS returns the hostname of the receiving mail server (e.g., <code>company-com.mail.protection.outlook.com</code>).</li>
+<li>Your server does an <strong>A/AAAA lookup</strong> on that hostname to get an IP address.</li>
+<li>Your server connects via SMTP (port 25) to that IP and delivers the message.</li>
+<li>The receiving mail server (Exchange Online/On-Prem, or any SMTP gateway) accepts it, runs spam/malware filtering, and drops it into the mailbox.</li>
+</ol>
+<p>Everything below (MX, CNAME, SPF, DKIM, DMARC, Autodiscover) exists to make this handoff correct, secure, and trusted.</p>
+<hr>
+<h2>2. MX Records (Mail Exchanger)</h2>
+<p><strong>Purpose:</strong> Tells the internet <em>which server(s) accept mail</em> for your domain.</p>
+<p><strong>Format:</strong></p>
+<pre><code>company.com.   MX   10   company-com.mail.protection.outlook.com.
+</code></pre>
+<ul>
+<li><strong>Priority number (10)</strong> — lower number = higher priority. Mail servers try the lowest number first, and fall back to higher numbers if the first is unreachable.</li>
+<li>You can have multiple MX records for redundancy:</li>
+</ul>
+<pre><code>company.com.   MX   10   mx1.company.com.
+company.com.   MX   20   mx2.company.com.   (backup)
+</code></pre>
+<ul>
+<li>The MX record points to a <strong>hostname</strong>, never directly to an IP — that hostname must then resolve via an A record.</li>
+</ul>
+<p><strong>Key exam/real-world facts:</strong></p>
+<ul>
+<li>MX records live at the <strong>domain apex</strong> (the root, e.g. <code>company.com</code>), not on a subdomain, unless you're specifically routing mail for a subdomain.</li>
+<li>In Microsoft 365, when you add a custom domain, Microsoft gives you an MX value like <code>company-com.mail.protection.outlook.com</code> — you must set this in your DNS provider (GoDaddy, Cloudflare, etc.), not in Microsoft.</li>
+<li>If MX is missing or wrong, <strong>inbound mail fails entirely</strong> — this is one of the most common &quot;we stopped receiving email&quot; tickets.</li>
+</ul>
+<hr>
+<h2>3. CNAME Records (Canonical Name)</h2>
+<p><strong>Purpose:</strong> An alias — points one hostname to another hostname (not an IP).</p>
+<p><strong>Format:</strong></p>
+<pre><code>autodiscover.company.com.   CNAME   autodiscover.outlook.com.
+</code></pre>
+<p><strong>Why CNAME matters for email specifically (Microsoft 365 / Exchange):</strong></p>
+<table>
+<thead>
+<tr>
+<th>CNAME record</th>
+<th>Points to</th>
+<th>Why it exists</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>autodiscover.company.com</code></td>
+<td><code>autodiscover.outlook.com</code></td>
+<td>Lets Outlook clients auto-configure server settings just from an email address</td>
+</tr>
+<tr>
+<td><code>selector1._domainkey.company.com</code></td>
+<td><code>selector1-company-com._domainkey.&lt;tenant&gt;.onmicrosoft.com</code></td>
+<td>DKIM signing (see below)</td>
+</tr>
+<tr>
+<td><code>selector2._domainkey.company.com</code></td>
+<td><code>selector2-company-com._domainkey.&lt;tenant&gt;.onmicrosoft.com</code></td>
+<td>DKIM key rotation pair</td>
+</tr>
+<tr>
+<td><code>sip.company.com</code></td>
+<td><code>sipdir.online.lync.com</code></td>
+<td>Teams/Skype for Business federation (legacy)</td>
+</tr>
+<tr>
+<td><code>lyncdiscover.company.com</code></td>
+<td><code>webdir.online.lync.com</code></td>
+<td>Teams client discovery</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Important distinction from MX:</strong> A CNAME <strong>cannot coexist with other records on the same name</strong> (e.g., you can't have both an MX and a CNAME on the exact same hostname), and CNAME can never point to an IP — only to another name that itself eventually resolves to an A/AAAA record.</p>
+<hr>
+<h2>4. Exchange (Server vs Online) — What It Actually Does</h2>
+<p><strong>Exchange</strong> is the mail server software/service that stores mailboxes, applies mail flow rules, and handles calendar/contacts (via MAPI/EWS/ActiveSync).</p>
+<ul>
+<li><strong>Exchange Server (on-prem)</strong> — you run it yourself on Windows Server. You own the MX record pointing to your own public IP/firewall, you manage the Edge Transport role or a smart host, and you're responsible for spam filtering, patching, and certificates.</li>
+<li><strong>Exchange Online (part of Microsoft 365)</strong> — Microsoft hosts it. Your DNS MX record points to Microsoft's filtering front door (<strong>Exchange Online Protection / EOP</strong>), which scans mail before it lands in mailboxes.</li>
+<li><strong>Hybrid Exchange</strong> — some mailboxes on-prem, some in the cloud, connected via a Hybrid Configuration Wizard; mail routing between the two uses a <strong>connector</strong> that trusts the on-prem server's IP.</li>
+</ul>
+<p><strong>Core Exchange components to know for AZ-104 / support work:</strong></p>
+<ul>
+<li><strong>Mailbox</strong> — the actual store of mail, calendar, contacts.</li>
+<li><strong>Transport rules (mail flow rules)</strong> — if/then logic applied to messages in transit (e.g., &quot;if subject contains 'Confidential', encrypt&quot;).</li>
+<li><strong>Connectors</strong> — define trusted paths for mail in/out (e.g., an on-prem device that needs to relay through Microsoft 365 without authentication, like a scanner or app).</li>
+<li><strong>Accepted domains</strong> — domains Exchange Online is configured to receive mail for (this must match your MX target).</li>
+<li><strong>Exchange Online Protection (EOP)</strong> — the spam/malware/phishing filter that sits in front of every inbound message.</li>
+</ul>
+<hr>
+<h2>5. SPF, DKIM, DMARC — The Trust Layer (you'll be asked about these alongside MX/CNAME)</h2>
+<p>These three work together to stop spoofing and are graded together by receiving mail servers.</p>
+<h3>SPF (Sender Policy Framework) — a TXT record</h3>
+<pre><code>company.com.   TXT   &#34;v=spf1 include:spf.protection.outlook.com -all&#34;
+</code></pre>
+<p>Declares <em>which servers are allowed to send mail as your domain</em>. <code>-all</code> = hard fail anything not listed (strict); <code>~all</code> = soft fail (flag but don't reject).</p>
+<h3>DKIM (DomainKeys Identified Mail) — CNAME records (as shown above)</h3>
+<p>Cryptographically signs outgoing mail with a private key; the receiving server checks the signature against a public key published via those CNAME records. Proves the message wasn't altered in transit and really came from an authorized sender.</p>
+<h3>DMARC (Domain-based Message Authentication) — a TXT record</h3>
+<pre><code>_dmarc.company.com.   TXT   &#34;v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@company.com&#34;
+</code></pre>
+<p>Tells receiving servers what to do if SPF/DKIM checks fail (<code>p=none/quarantine/reject</code>) and where to send reporting data. This is the record that actually <strong>enforces</strong> the other two.</p>
+<p><strong>Why this matters together:</strong> MX tells the world where to deliver mail <em>to</em> you. SPF/DKIM/DMARC tell the world what mail is legitimately <em>from</em> you. Missing SPF/DKIM/DMARC is why company domains get spoofed in phishing campaigns, and it's a very common cause of &quot;our emails are landing in recipients' spam&quot; tickets.</p>
+<hr>
+<h2>6. How It All Works Together — Full Picture</h2>
+<pre class="mermaid">flowchart TD
+    A[Sender&#39;s mail server] --&gt;|1. DNS query: MX for company.com| B[DNS]
+    B --&gt;|2. Returns mail.protection.outlook.com priority 10| A
+    A --&gt;|3. DNS query: A record for that host| B
+    A --&gt;|4. SMTP connect + deliver| C[Exchange Online Protection]
+    C --&gt;|5. Checks SPF/DKIM/DMARC against sender domain&#39;s DNS| B
+    C --&gt;|6. Spam/malware filter| D[Exchange Online Mailbox]
+    E[Outlook client] --&gt;|Autodiscover CNAME lookup| B
+    E --&gt;|Connects via MAPI/EWS| D
+</pre>
+<hr>
+<h2>7. Implementing This at a Company (Practical Walkthrough)</h2>
+<p>This is the exact sequence you'd follow onboarding a company domain to Microsoft 365 — useful both for real work and as a mental model for exam scenarios.</p>
+<ol>
+<li><strong>Add the custom domain</strong> in Microsoft 365 admin center (or Entra ID &gt; Custom domain names).</li>
+<li><strong>Verify domain ownership</strong> — Microsoft gives you a TXT record to add first (proves you control the DNS zone).</li>
+<li><strong>Add the MX record</strong> Microsoft provides, pointing to <code>&lt;domain-key&gt;.mail.protection.outlook.com</code>, priority 0.</li>
+<li><strong>Add SPF (TXT)</strong> — <code>v=spf1 include:spf.protection.outlook.com -all</code>.</li>
+<li><strong>Add the two DKIM CNAMEs</strong> (<code>selector1</code>/<code>selector2._domainkey</code>), then <strong>enable DKIM signing</strong> in Defender/Exchange admin center — it's created disabled by default.</li>
+<li><strong>Add DMARC (TXT)</strong> on <code>_dmarc.company.com</code> — start with <code>p=none</code> to monitor, then tighten to <code>quarantine</code>/<code>reject</code> once you confirm legitimate senders aren't breaking.</li>
+<li><strong>Add Autodiscover CNAME</strong> so Outlook clients auto-configure.</li>
+<li><strong>Lower the TTL</strong> on records before a cutover (e.g., to 300 seconds) so if something's wrong you can fix and it propagates fast; raise it back afterward.</li>
+<li><strong>Cut over MX last</strong>, once everything else is confirmed correct — this is the point mail actually starts flowing to the new system, so it should be the final, deliberate step, often done outside business hours.</li>
+<li><strong>Validate</strong> using Microsoft's built-in domain health checker, plus external tools (MXToolbox is the industry standard for checking MX/SPF/DKIM/DMARC/CNAME all at once).</li>
+</ol>
+<hr>
+<h2>8. Common Real-World Troubleshooting Scenarios</h2>
+<table>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely Cause</th>
+<th>Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Inbound mail bouncing / not arriving</td>
+<td>MX record missing, wrong, or pointing to old provider</td>
+<td><code>nslookup -type=mx company.com</code></td>
+</tr>
+<tr>
+<td>Outlook can't auto-configure</td>
+<td>Autodiscover CNAME missing or wrong</td>
+<td><code>nslookup -type=cname autodiscover.company.com</code></td>
+</tr>
+<tr>
+<td>Legit mail going to recipients' spam</td>
+<td>Missing/misconfigured SPF, DKIM not enabled, or no DMARC</td>
+<td>Check headers of a received message for <code>spf=</code>, <code>dkim=</code>, <code>dmarc=</code> results</td>
+</tr>
+<tr>
+<td>Domain being spoofed for phishing</td>
+<td>No DMARC enforcement (<code>p=none</code> or missing)</td>
+<td>Move to <code>p=quarantine</code> then <code>p=reject</code></td>
+</tr>
+<tr>
+<td>Mail flow works internally but not externally</td>
+<td>Connector misconfiguration or accepted domain mismatch</td>
+<td>Exchange admin center &gt; Mail flow &gt; Connectors</td>
+</tr>
+<tr>
+<td>DNS changes &quot;not working&quot;</td>
+<td>TTL caching — old records still cached by resolvers</td>
+<td>Wait out the TTL, or check with a tool that bypasses cache (e.g., <code>dig +trace</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Useful command-line tools to practice with:</strong></p>
+<pre><code class="language-bash">nslookup -type=mx company.com
+nslookup -type=txt company.com
+nslookup -type=cname autodiscover.company.com
+dig company.com MX
+dig _dmarc.company.com TXT
+</code></pre>
+<hr>
+<h2>9. Quick-Reference Summary Table</h2>
+<table>
+<thead>
+<tr>
+<th>Record</th>
+<th>Type</th>
+<th>Points to</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MX</td>
+<td>MX</td>
+<td>Hostname (mail server)</td>
+<td>Where to deliver inbound mail</td>
+</tr>
+<tr>
+<td>Autodiscover</td>
+<td>CNAME</td>
+<td><code>autodiscover.outlook.com</code></td>
+<td>Client auto-configuration</td>
+</tr>
+<tr>
+<td>DKIM selector1/2</td>
+<td>CNAME</td>
+<td>Microsoft's DKIM key host</td>
+<td>Message signing/verification</td>
+</tr>
+<tr>
+<td>SPF</td>
+<td>TXT</td>
+<td>(policy string)</td>
+<td>Authorized senders</td>
+</tr>
+<tr>
+<td>DMARC</td>
+<td>TXT</td>
+<td>(policy string)</td>
+<td>Enforcement + reporting</td>
+</tr>
+<tr>
+<td>A/AAAA</td>
+<td>A/AAAA</td>
+<td>IP address</td>
+<td>Resolves any hostname a CNAME/MX ultimately depends on</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2>10. Why This Matters for AZ-104 and Support Work</h2>
+<p>Azure Administrator Associate touches DNS through <strong>Azure DNS zones</strong> and <strong>Entra ID custom domains</strong> rather than Exchange specifically, but the <em>concepts transfer directly</em>: verifying domain ownership via TXT, adding MX/CNAME records for hybrid identity or mail routing, and troubleshooting propagation delays are all patterns you'll see in both the exam and real tickets. Being able to explain <em>why</em> a record exists (not just where to paste it) is what separates L2 troubleshooting from just following a runbook — and it's exactly the kind of depth that shows well in interviews for cloud/systems engineering roles.</p>
+
+
+<!--claude-mermaid-runtime-begin:3477-->
+<style>.mermaid-diagram{margin-block:4px}.mermaid-diagram svg{display:block;margin:0 auto;max-width:100%;height:auto}</style>
+<script src="/_runtime/mermaid-11.16.1.min.js"></script>
+<script>(function(){
+var CFG={"palettes":{"light":{"surface":"#f4efe4","text":"#42392e","line":"#8a7f6d","border":"#7a6c52","bg":"#fffdf8"},"dark":{"surface":"#262b34","text":"#f2f3f5","line":"#a8adb8","border":"#9aa4b8","bg":"#1f232b"}}};
+if(typeof mermaid==='undefined')return;
+var pres=Array.prototype.slice.call(document.querySelectorAll('pre.mermaid')).filter(function(p){if(p.hasAttribute('data-claude-mermaid-claimed'))return false;p.setAttribute('data-claude-mermaid-claimed','1');return true;});
+if(!pres.length)return;
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+var root=document.documentElement;
+var items=pres.map(function(pre){
+var mount=document.createElement('div');mount.className='mermaid-diagram';
+return {pre:pre,mount:mount,src:pre.textContent||''};
+});
+var seq=0;
+var renderGen=0;
+var lastKey='';
+function pageBg(fallback){
+var els=[document.body,document.documentElement];
+for(var i=0;i<els.length;i++){
+var c=els[i]&&getComputedStyle(els[i]).backgroundColor;
+if(c&&c!=='transparent'&&c!=='rgba(0, 0, 0, 0)')return c;
+}
+return fallback;
+}
+function render(){
+var theme=root.getAttribute('data-theme');
+var dark=theme==='dark'||(!!(mq&&mq.matches)&&theme!=='light');
+var pal=dark?CFG.palettes.dark:CFG.palettes.light;
+var bg=pageBg(pal.bg);
+var key=(dark?'d':'l')+'|'+bg;
+if(key===lastKey)return;
+lastKey=key;
+var gen=++renderGen;
+var font=getComputedStyle(document.body).fontFamily||'sans-serif';
+var nat={useMaxWidth:false};
+mermaid.initialize({
+startOnLoad:false,securityLevel:'strict',theme:'base',
+flowchart:nat,sequence:nat,er:nat,state:nat,class:nat,pie:nat,
+gantt:nat,journey:nat,timeline:nat,gitGraph:nat,mindmap:nat,xyChart:nat,
+quadrantChart:nat,sankey:nat,c4:nat,requirement:nat,block:nat,
+packet:nat,kanban:nat,architecture:nat,radar:nat,
+themeVariables:{background:bg,mainBkg:pal.surface,primaryColor:pal.surface,
+primaryTextColor:pal.text,lineColor:pal.line,primaryBorderColor:pal.border,
+nodeBorder:pal.border,clusterBorder:pal.border,edgeLabelBackground:bg,
+clusterBkg:'rgba(127,127,127,0.07)',titleColor:pal.text,
+darkMode:dark,rowOdd:bg,rowEven:'rgba(127,127,127,0.07)',
+attributeBackgroundColorOdd:bg,attributeBackgroundColorEven:'rgba(127,127,127,0.07)',
+fontSize:'16px',fontFamily:font},
+themeCSS:'.node rect, .node circle, .node polygon, .node path, .cluster rect { stroke-width: 2px; }'
+});
+items.forEach(function(it){
+var id='claude-mermaid-'+seq++;
+mermaid.render(id,it.src).then(function(r){
+if(gen!==renderGen)return;
+var prev=it.pre.previousElementSibling;
+if(prev&&prev.className==='mermaid-diagram'&&prev!==it.mount)return;
+it.mount.innerHTML=r.svg;
+if(!it.mount.parentNode)it.pre.parentNode.insertBefore(it.mount,it.pre);
+it.pre.style.display='none';
+},function(){
+var scratch=document.getElementById(id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+scratch=document.getElementById('d'+id);
+if(scratch)scratch.parentNode.removeChild(scratch);
+if(gen!==renderGen)return;
+if(it.mount.parentNode)it.mount.parentNode.removeChild(it.mount);
+it.pre.style.display='';
+});
+});
+}
+render();
+if(mq&&mq.addEventListener)mq.addEventListener('change',render);
+if(typeof MutationObserver!=='undefined')new MutationObserver(render).observe(root,{attributes:true,attributeFilter:['data-theme']});
+})();</script>
+<!--claude-mermaid-runtime-end-->
+</body></html>
